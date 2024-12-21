@@ -1,0 +1,2 @@
+[tool.pylance]
+python.analysis.extraPaths = ["src"] 
