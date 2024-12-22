@@ -45,6 +45,19 @@ class MaskDiceLoss(nn.Module):
         dice_diff = (2 * intersection.sum(1) + smooth) / (inputs.sum(1) + targets.sum(1) + smooth * n)
         loss = 1 - dice_diff.mean()
         return loss
+    
+
+class NaNMask(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, inputs):
+        # Create a mask where NaNs are marked as 1
+        nan_mask = torch.isnan(inputs).float()
+        # Replace NaNs with 0 in the input tensor
+        inputs = torch.nan_to_num(inputs, nan=0.0)
+        # Concatenate the input tensor with the NaN mask
+        return torch.cat([inputs, nan_mask], dim=-1)
 
 
 class SamePadConv(nn.Module):
@@ -102,8 +115,8 @@ class Backbone(nn.Module):
 class LightCurveEncoder(nn.Module):
     def __init__(self, input_dim, output_dim, depth, dilation):
         super().__init__()
-        self.mapping = nn.Conv1d(input_dim, output_dim, 1)
-        self.backone = Backbone(
+        self.mapping = nn.Conv1d(input_dim + 1, output_dim, 1)  # +1 for NaN mask
+        self.backbone = Backbone(
             output_dim,
             [output_dim] * depth,
             dilation,
@@ -112,10 +125,9 @@ class LightCurveEncoder(nn.Module):
         self.repr_dropout = nn.Dropout(p=0.1)
     
     def forward(self, x):
-        # x: B x T x Ci
         x = x.transpose(1, 2)   # B x Ci x T
         x = self.mapping(x)     # B x Ch x T
-        x = self.backone(x)     # B x Co x T
+        x = self.backbone(x)    # B x Co x T
         x = self.repr_dropout(x)
         return x
 
@@ -172,6 +184,7 @@ class FCN4FlareModel(FCN4FlarePreTrainedModel):
     def __init__(self, config: FCN4FlareConfig):
         super().__init__(config)
         
+        self.nan_mask = NaNMask()
         self.encoder = LightCurveEncoder(
             config.input_dim,
             config.hidden_dim,
@@ -186,16 +199,25 @@ class FCN4FlareModel(FCN4FlarePreTrainedModel):
     def forward(
         self,
         input_features,
+        sequence_mask=None,
         labels=None,
         return_dict=None,
     ):
-        outputs = self.encoder(input_features)
+        # Apply NaN masking
+        inputs_with_mask = self.nan_mask(input_features)
+
+        # Encoder and segmentation head
+        outputs = self.encoder(inputs_with_mask)
         logits = self.seghead(outputs)
         
+        # Loss calculation
         loss = None
         if labels is not None:
             loss_fct = MaskDiceLoss(self.config.maskdice_threshold)
             logits_sigmoid = torch.sigmoid(logits).squeeze(-1)
+            if sequence_mask is not None:
+                logits_sigmoid = logits_sigmoid * sequence_mask
+                labels = labels * sequence_mask
             loss = loss_fct(logits_sigmoid, labels)
 
         if not return_dict:
