@@ -16,6 +16,8 @@ from sklearn.metrics import (
 )
 import transformers
 from transformers import (
+    AutoConfig,
+    AutoModel,
     HfArgumentParser,
     Trainer,
     TrainingArguments,
@@ -26,7 +28,12 @@ from transformers.trainer_utils import get_last_checkpoint
 from data.data_collator import DataCollatorForFlareDetection
 from models import FCN4FlareModel, FCN4FlareConfig
 
+
+AutoConfig.register("fcn4flare", FCN4FlareConfig)
+AutoModel.register(FCN4FlareConfig, FCN4FlareModel)
+
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class DataTrainingArguments:
@@ -261,13 +268,13 @@ def main():
         dataset["validation"] = split["test"]
 
     # 7. Load pretrained model and config
-    config = (FCN4FlareConfig.from_json_file(model_args.config_name_or_path)
+    config = (AutoConfig.from_pretrained(model_args.config_name_or_path)
              if os.path.isfile(model_args.config_name_or_path)
-             else FCN4FlareConfig.from_pretrained(model_args.config_name_or_path))
+             else AutoConfig.from_pretrained(model_args.config_name_or_path))
     
-    model = (FCN4FlareModel(config)
+    model = (AutoModel.from_config(config)
             if os.path.isfile(model_args.config_name_or_path)
-            else FCN4FlareModel.from_pretrained(model_args.model_name_or_path, config=config))
+            else AutoModel.from_pretrained(model_args.model_name_or_path, config=config))
 
     # 8. Prepare datasets for trainer
     def preprocess_function(examples):
@@ -400,6 +407,10 @@ def main():
     if training_args.do_predict:
         logger.info("\n*** Predict ***\n")
         predict_results = trainer.predict(predict_dataset)
+        metrics = predict_results.metrics
+        metrics["predict_samples"] = len(predict_dataset)
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
         
         # Get logits with shape [num_samples, max_seq_len, 1]
         predictions = predict_results.predictions[0]
