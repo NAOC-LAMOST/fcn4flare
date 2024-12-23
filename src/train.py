@@ -14,6 +14,8 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score
 import torch
 from data.data_collator import DataCollatorForFlareDetection
+from sklearn.metrics import precision_score, recall_score, f1_score
+
 
 logger = logging.getLogger(__name__)
 
@@ -92,30 +94,55 @@ def compute_metrics(eval_preds):
     predictions_sigmoid_flat = predictions_sigmoid[valid_mask]
     labels_flat = labels[valid_mask].astype(np.int64)
     
-    # Load metrics with zero_division parameter
-    metric_precision = evaluate.load("precision")
-    metric_recall = evaluate.load("recall")
-    metric_f1 = evaluate.load("f1")
+    # # Load metrics with zero_division parameter
+    # metric_precision = evaluate.load("precision")
+    # metric_recall = evaluate.load("recall")
+    # metric_f1 = evaluate.load("f1")
     
-    # Calculate metrics with zero_division=0
-    precision = metric_precision.compute(
-        predictions=predictions_flat, 
-        references=labels_flat,
-        average="binary",
+    # # Calculate metrics with zero_division=0
+    # precision = metric_precision.compute(
+    #     predictions=predictions_flat, 
+    #     references=labels_flat,
+    #     average="binary",
+    #     zero_division=0
+    # )["precision"]
+    
+    # recall = metric_recall.compute(
+    #     predictions=predictions_flat, 
+    #     references=labels_flat,
+    #     average="binary",
+    #     zero_division=0
+    # )["recall"]
+    
+    # f1 = metric_f1.compute(
+    #     predictions=predictions_flat, 
+    #     references=labels_flat,
+    # )["f1"]
+    
+    # Load metrics using sklearn instead of evaluate due to compatibility issues
+    # Reference: https://github.com/huggingface/evaluate/pull/656
+    # Calculate precision
+    precision = precision_score(
+        y_true=labels_flat, 
+        y_pred=predictions_flat, 
+        average="binary", 
         zero_division=0
-    )["precision"]
-    
-    recall = metric_recall.compute(
-        predictions=predictions_flat, 
-        references=labels_flat,
-        average="binary",
+    )
+
+    # Calculate recall
+    recall = recall_score(
+        y_true=labels_flat, 
+        y_pred=predictions_flat, 
+        average="binary", 
         zero_division=0
-    )["recall"]
-    
-    f1 = metric_f1.compute(
-        predictions=predictions_flat, 
-        references=labels_flat,
-    )["f1"]
+    )
+
+    # Calculate F1 score
+    f1 = f1_score(
+        y_true=labels_flat, 
+        y_pred=predictions_flat, 
+        average="binary"
+    )
     
     # Calculate IoU (Intersection over Union)
     intersection = np.sum(predictions_flat * labels_flat)
