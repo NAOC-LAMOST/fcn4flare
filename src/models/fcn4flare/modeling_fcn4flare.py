@@ -1,11 +1,13 @@
+from typing import Optional
+from dataclasses import dataclass
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel
+from transformers.modeling_outputs import ModelOutput
+from transformers.modeling_utils import PreTrainedModel
+
 from .configuration_fcn4flare import FCN4FlareConfig
-from dataclasses import dataclass
-from typing import Optional
-from transformers.utils import ModelOutput
 
 
 class MaskDiceLoss(nn.Module):
@@ -38,14 +40,17 @@ class MaskDiceLoss(nn.Module):
         """
         n = targets.size(0)
         smooth = 1e-8
+        
+        # Apply thresholding to inputs
         inputs_act = torch.gt(inputs, self.maskdice_threshold)
         inputs_act = inputs_act.long()
         inputs = inputs * inputs_act
+        
         intersection = inputs * targets
         dice_diff = (2 * intersection.sum(1) + smooth) / (inputs.sum(1) + targets.sum(1) + smooth * n)
         loss = 1 - dice_diff.mean()
         return loss
-    
+
 
 class NaNMask(nn.Module):
     def __init__(self):
@@ -201,7 +206,7 @@ class FCN4FlareModel(FCN4FlarePreTrainedModel):
         input_features,
         sequence_mask=None,
         labels=None,
-        return_dict=None,
+        return_dict=True,
     ):
         # Apply NaN masking
         inputs_with_mask = self.nan_mask(input_features)
@@ -215,10 +220,16 @@ class FCN4FlareModel(FCN4FlarePreTrainedModel):
         if labels is not None:
             loss_fct = MaskDiceLoss(self.config.maskdice_threshold)
             logits_sigmoid = torch.sigmoid(logits).squeeze(-1)
+            
             if sequence_mask is not None:
+                # Copy labels and replace padding positions with zeros
+                labels_for_loss = labels.clone()
+                labels_for_loss = torch.nan_to_num(labels_for_loss, nan=0.0)
+                labels_for_loss = labels_for_loss * sequence_mask
                 logits_sigmoid = logits_sigmoid * sequence_mask
-                labels = labels * sequence_mask
-            loss = loss_fct(logits_sigmoid, labels)
+                loss = loss_fct(logits_sigmoid, labels_for_loss)
+            else:
+                loss = loss_fct(logits_sigmoid, labels)
 
         if not return_dict:
             output = (logits,)

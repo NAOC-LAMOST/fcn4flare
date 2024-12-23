@@ -1,21 +1,30 @@
-from dataclasses import dataclass, field
 import logging
-from typing import Optional
-from transformers import HfArgumentParser, TrainingArguments
-import sys
 import os
-import transformers
-from transformers.trainer_utils import get_last_checkpoint
-from models import FCN4FlareModel, FCN4FlareConfig
-from datasets import load_dataset   
-from transformers import Trainer
-import evaluate
-import numpy as np
-from sklearn.metrics import roc_auc_score, average_precision_score
-import torch
-from data.data_collator import DataCollatorForFlareDetection
-from sklearn.metrics import precision_score, recall_score, f1_score
+import sys
+from dataclasses import dataclass, field
+from typing import Optional
 
+import datasets
+from datasets import load_dataset
+import numpy as np
+from sklearn.metrics import (
+    average_precision_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
+import transformers
+from transformers import (
+    HfArgumentParser,
+    Trainer,
+    TrainingArguments,
+    set_seed,
+)
+from transformers.trainer_utils import get_last_checkpoint
+
+from data.data_collator import DataCollatorForFlareDetection
+from models import FCN4FlareModel, FCN4FlareConfig
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +37,7 @@ class DataTrainingArguments:
     """
 
     dataset_name: Optional[str] = field(
-        default="Maxwell-Jia/kepler_flare",
-        metadata={
-            "help": "Name of a dataset from the hub (could be your own, possibly private dataset hosted on the hub)."
-        },
+        default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
@@ -43,6 +49,9 @@ class DataTrainingArguments:
     labels_column_name: Optional[str] = field(
         default="label",
         metadata={"help": "The name of the column containing the labels."}
+    )
+    overwrite_cache: bool = field(
+        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
     max_train_samples: Optional[int] = field(
         default=None,
@@ -62,6 +71,37 @@ class DataTrainingArguments:
             )
         },
     )
+    max_predict_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": (
+                "For debugging purposes or quicker training, truncate the number of test examples to this "
+                "value if set."
+            )
+        },
+    )
+    max_seq_length: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": (
+                "The maximum total input sequence length after tokenization. Sequences longer "
+                "than this will be truncated, sequences shorter will be padded."
+            )
+        },
+    )
+    pad_to_max_length: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Whether to pad all samples to `max_seq_length`. If False, will pad the samples dynamically "
+                "when batching to the maximum length in the batch."
+            )
+        },
+    )
+
+    def __post_init__(self):
+        if self.dataset_name is None:
+            raise ValueError("dataset_name is required")    
 
 @dataclass
 class ModelArguments:
@@ -71,92 +111,78 @@ class ModelArguments:
     )
     config_name_or_path: str = field(
         default="Maxwell-Jia/fcn4flare",
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"},
+        metadata={"help": "Path to local config file or model identifier from huggingface.co/models"},
+    )
+    cache_dir: str = field(
+        default=None,
+        metadata={"help": "Path to cache directory"},
+    )
+    token: str = field(
+        default=None,
+        metadata={"help": "Hugging Face token"},
+    )
+    trust_remote_code: bool = field(
+        default=True,
+        metadata={"help": "Whether to trust remote code"},
     )
 
 
 def compute_metrics(eval_preds):
     """
     Compute multiple metrics for binary segmentation evaluation.
-    Only computes metrics on non-padded (non-NaN) portions of sequences.
+    Only computes metrics on non-padded portions of sequences.
     """        
-    logits, labels = eval_preds
+    predictions = eval_preds.predictions[0]  # Get logits with shape [num_samples, max_seq_len, 1]
+    labels = eval_preds.label_ids  # Shape [num_samples, max_seq_len]
     
-    # Create mask for non-NaN values
-    valid_mask = ~np.isnan(labels)
+    # Remove last dimension to match labels shape
+    predictions = predictions.squeeze(-1)  # Now shape is [num_samples, max_seq_len]
+    predictions_sigmoid = 1 / (1 + np.exp(-predictions))
     
-    # Apply sigmoid and threshold for binary predictions
-    predictions_sigmoid = 1 / (1 + np.exp(-logits))
-    predictions = (predictions_sigmoid > 0.5).astype(np.int64)
+    # Remove padded values (using -100 in labels to indicate padding)
+    true_predictions = []
+    true_labels = []
     
-    # Filter out padded values using the mask
-    predictions_flat = predictions[valid_mask]
-    predictions_sigmoid_flat = predictions_sigmoid[valid_mask]
-    labels_flat = labels[valid_mask].astype(np.int64)
+    for pred, label in zip(predictions_sigmoid, labels):
+        valid_mask = (label != -100)  # 使用-100标识padding
+        true_predictions.append(pred[valid_mask])
+        true_labels.append(label[valid_mask])
     
-    # # Load metrics with zero_division parameter
-    # metric_precision = evaluate.load("precision")
-    # metric_recall = evaluate.load("recall")
-    # metric_f1 = evaluate.load("f1")
+    # Flatten predictions and labels
+    true_predictions = np.concatenate(true_predictions)
+    true_labels = np.concatenate(true_labels)
     
-    # # Calculate metrics with zero_division=0
-    # precision = metric_precision.compute(
-    #     predictions=predictions_flat, 
-    #     references=labels_flat,
-    #     average="binary",
-    #     zero_division=0
-    # )["precision"]
-    
-    # recall = metric_recall.compute(
-    #     predictions=predictions_flat, 
-    #     references=labels_flat,
-    #     average="binary",
-    #     zero_division=0
-    # )["recall"]
-    
-    # f1 = metric_f1.compute(
-    #     predictions=predictions_flat, 
-    #     references=labels_flat,
-    # )["f1"]
-    
-    # Load metrics using sklearn instead of evaluate due to compatibility issues
-    # Reference: https://github.com/huggingface/evaluate/pull/656
-    # Calculate precision
+    # Convert to binary predictions
+    binary_predictions = (true_predictions > 0.5).astype(np.int64)
+
     precision = precision_score(
-        y_true=labels_flat, 
-        y_pred=predictions_flat, 
+        y_true=true_labels, 
+        y_pred=binary_predictions, 
         average="binary", 
         zero_division=0
     )
-
-    # Calculate recall
     recall = recall_score(
-        y_true=labels_flat, 
-        y_pred=predictions_flat, 
+        y_true=true_labels, 
+        y_pred=binary_predictions, 
         average="binary", 
         zero_division=0
     )
-
-    # Calculate F1 score
     f1 = f1_score(
-        y_true=labels_flat, 
-        y_pred=predictions_flat, 
+        y_true=true_labels, 
+        y_pred=binary_predictions, 
         average="binary"
     )
     
-    # Calculate IoU (Intersection over Union)
-    intersection = np.sum(predictions_flat * labels_flat)
-    union = np.sum(predictions_flat) + np.sum(labels_flat) - intersection
+    # Calculate additional metrics
+    intersection = np.sum(binary_predictions * true_labels)
+    union = np.sum(binary_predictions) + np.sum(true_labels) - intersection
     iou = intersection / (union + 1e-8)
+    dice = 2 * intersection / (np.sum(binary_predictions) + np.sum(true_labels) + 1e-8)
     
-    # Calculate Dice coefficient
-    dice = 2 * intersection / (np.sum(predictions_flat) + np.sum(labels_flat) + 1e-8)
-    
-    # Calculate AUC-ROC and Average Precision
     try:
-        auc_roc = roc_auc_score(labels_flat, predictions_sigmoid_flat)
-        avg_precision = average_precision_score(labels_flat, predictions_sigmoid_flat)
-    except ValueError:  # Handle cases where there's only one class
+        auc_roc = roc_auc_score(true_labels, true_predictions)
+        avg_precision = average_precision_score(true_labels, true_predictions)
+    except ValueError:
         auc_roc = 0.0
         avg_precision = 0.0
     
@@ -172,19 +198,14 @@ def compute_metrics(eval_preds):
 
 
 def main():
-    # See all possible arguments in transformers.training_args
-    # or by passing the --help flag to this script.
-    # We now keep distinct sets of args, for a cleaner separation of concerns.
-
+    # 1. Parse arguments
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
-        # If we pass only one argument to the script and it's the path to a json file,
-        # let's parse it to get our arguments.
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    # Setup logging
+    # 2. Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
@@ -193,25 +214,20 @@ def main():
             logging.FileHandler(os.path.join(training_args.output_dir, "train.log"))
         ],
     )
-
-    if training_args.should_log:
-        # The default of training_args.log_level is passive, so we set log level at info here to have that default.
-        transformers.utils.logging.set_verbosity_info()
-
+    
     log_level = training_args.get_process_log_level()
     logger.setLevel(log_level)
     transformers.utils.logging.set_verbosity(log_level)
     transformers.utils.logging.enable_default_handler()
     transformers.utils.logging.enable_explicit_format()
 
-    # Log on each process the small summary:
     logger.warning(
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}, "
         + f"distributed training: {training_args.parallel_mode.value == 'distributed'}, 16-bits training: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
 
-    # Detecting last checkpoint.
+    # 3. Detect last checkpoint
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
@@ -226,82 +242,185 @@ def main():
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
 
-    # Load dataset
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    # TODO support datasets from local folders
-    dataset = load_dataset(data_args.dataset_name, trust_remote_code=True)
+    # 4. Set seed before initializing model
+    set_seed(training_args.seed)
 
-    # Check if required columns are present
-    required_columns = [data_args.input_features_column_name, data_args.labels_column_name]
-    for split in dataset.keys():
-        for col in required_columns:
-            if col not in dataset[split].column_names:
-                raise ValueError(f"Column '{col}' not found in {split} dataset.")
+    # 5. Load dataset
+    dataset = load_dataset(
+        data_args.dataset_name,
+        data_args.dataset_config_name,
+        cache_dir=model_args.cache_dir,
+        token=model_args.token,
+        trust_remote_code=model_args.trust_remote_code,
+    )
 
-    # Rename column names to standardized names (only "input_features" and "labels" need to be present)
-    for split in dataset.keys():
-        if data_args.input_features_column_name in dataset[split].column_names:
-            dataset[split] = dataset[split].rename_column(data_args.input_features_column_name, "input_features")
-        if data_args.labels_column_name in dataset[split].column_names:
-            dataset[split] = dataset[split].rename_column(data_args.labels_column_name, "labels")
-
-    # If we don't have a validation split, split off a percentage of train as validation.
-    data_args.train_val_split = None if "validation" in dataset.keys() else data_args.train_val_split
-    if isinstance(data_args.train_val_split, float) and data_args.train_val_split > 0.0:
+    # 6. Split train/validation if needed
+    if "validation" not in dataset and isinstance(data_args.train_val_split, float) and data_args.train_val_split > 0.0:
         split = dataset["train"].train_test_split(data_args.train_val_split)
         dataset["train"] = split["train"]
         dataset["validation"] = split["test"]
 
-    # Data collator
-    data_collator = DataCollatorForFlareDetection(pad_value=float('nan'))
+    # 7. Load pretrained model and config
+    config = (FCN4FlareConfig.from_json_file(model_args.config_name_or_path)
+             if os.path.isfile(model_args.config_name_or_path)
+             else FCN4FlareConfig.from_pretrained(model_args.config_name_or_path))
+    
+    model = (FCN4FlareModel(config)
+            if os.path.isfile(model_args.config_name_or_path)
+            else FCN4FlareModel.from_pretrained(model_args.model_name_or_path, config=config))
 
-    # Load model
-    if model_args.config_name_or_path and os.path.isfile(model_args.config_name_or_path):
-        # If config file is provided, initialize model from config
-        config = FCN4FlareConfig.from_json_file(model_args.config_name_or_path)
-        model = FCN4FlareModel(config)
-        logger.info(f"Model initialized from config file: {model_args.config_name_or_path}")
-    else:
-        # Load pretrained model/config
-        config = FCN4FlareConfig.from_pretrained(
-            model_args.config_name_or_path if model_args.config_name_or_path else model_args.model_name_or_path
-        )
-        model = FCN4FlareModel.from_pretrained(
-            model_args.model_name_or_path,
-            config=config,
-        )
-        logger.info(f"Model loaded from pretrained: {model_args.model_name_or_path}")
+    # 8. Prepare datasets for trainer
+    def preprocess_function(examples):
+        """Pad sequences and create sequence mask"""
+        input_features = examples[data_args.input_features_column_name]
+        labels = examples[data_args.labels_column_name]
+        
+        # Convert boolean labels to int
+        labels = [int(l) for l in labels]
+        
+        if data_args.max_seq_length is not None:
+            # Pad or truncate sequences
+            if len(input_features) > data_args.max_seq_length:
+                input_features = input_features[:data_args.max_seq_length]
+                labels = labels[:data_args.max_seq_length]
+                sequence_mask = [1] * data_args.max_seq_length
+            else:
+                pad_length = data_args.max_seq_length - len(input_features)
+                sequence_mask = [1] * len(input_features) + [0] * pad_length
+                input_features.extend([float('nan')] * pad_length)
+                labels.extend([-100] * pad_length)
+        else:
+            sequence_mask = [1] * len(input_features)
+        
+        return {
+            "input_features": input_features,
+            "labels": labels,
+            "sequence_mask": sequence_mask
+        }
+
+    train_dataset = None
+    eval_dataset = None
+    predict_dataset = None
 
     if training_args.do_train:
         if "train" not in dataset:
             raise ValueError("--do_train requires a train dataset")
-        if data_args.max_train_samples is not None:
-            dataset["train"] = (
-                dataset["train"].shuffle(seed=training_args.seed).select(range(data_args.max_train_samples))
+        train_dataset = dataset["train"]
+        if data_args.max_train_samples:
+            max_train_samples = min(len(train_dataset), data_args.max_train_samples)
+            train_dataset = train_dataset.select(range(max_train_samples))
+        with training_args.main_process_first(desc="train dataset map pre-processing"):
+            train_dataset = train_dataset.map(
+                preprocess_function,
+                desc="Padding train dataset",
+                load_from_cache_file=not data_args.overwrite_cache,
+                remove_columns=train_dataset.column_names,
+                features=datasets.Features({
+                    "input_features": datasets.Sequence(datasets.Value("float32")),
+                    "labels": datasets.Sequence(datasets.Value("int64")),
+                    "sequence_mask": datasets.Sequence(datasets.Value("int64"))
+                })
             )
 
     if training_args.do_eval:
         if "validation" not in dataset:
             raise ValueError("--do_eval requires a validation dataset")
-        if data_args.max_eval_samples is not None:
-            dataset["validation"] = (
-                dataset["validation"].shuffle(seed=training_args.seed).select(range(data_args.max_eval_samples))
+        eval_dataset = dataset["validation"]
+        if data_args.max_eval_samples:
+            max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
+            eval_dataset = eval_dataset.select(range(max_eval_samples))
+        with training_args.main_process_first(desc="eval dataset map pre-processing"):
+            eval_dataset = eval_dataset.map(
+                preprocess_function,
+                desc="Padding validation dataset",
+                load_from_cache_file=not data_args.overwrite_cache,
+                remove_columns=eval_dataset.column_names,
+                features=datasets.Features({
+                    "input_features": datasets.Sequence(datasets.Value("float32")),
+                    "labels": datasets.Sequence(datasets.Value("int64")),
+                    "sequence_mask": datasets.Sequence(datasets.Value("int64"))
+                })
             )
 
-    # Initialize our trainer
+    if training_args.do_predict:
+        if "test" not in dataset:
+            raise ValueError("--do_predict requires a test dataset")
+        predict_dataset = dataset["test"]
+        if data_args.max_predict_samples:
+            max_predict_samples = min(len(predict_dataset), data_args.max_predict_samples)
+            predict_dataset = predict_dataset.select(range(max_predict_samples))
+        with training_args.main_process_first(desc="predict dataset map pre-processing"):
+            predict_dataset = predict_dataset.map(
+                preprocess_function,
+                desc="Padding test dataset",
+                load_from_cache_file=not data_args.overwrite_cache,
+                remove_columns=predict_dataset.column_names,
+                features=datasets.Features({
+                    "input_features": datasets.Sequence(datasets.Value("float32")),
+                    "labels": datasets.Sequence(datasets.Value("int64")),
+                    "sequence_mask": datasets.Sequence(datasets.Value("int64"))
+                })
+            )
+
+    # 9. Initialize trainer
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=dataset["train"] if training_args.do_train else None,
-        eval_dataset=dataset["validation"] if training_args.do_eval else None,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         compute_metrics=compute_metrics,
-        data_collator=data_collator,
+        data_collator=DataCollatorForFlareDetection(
+            pad_to_max_length=data_args.pad_to_max_length,
+            max_length=data_args.max_seq_length,
+            pad_to_multiple_of=8 if training_args.fp16 else None
+        ),
     )
 
-    # Start training
-    trainer.train()
+    # 10. Training
+    if training_args.do_train:
+        checkpoint = training_args.resume_from_checkpoint or last_checkpoint
+        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        trainer.save_model()
+        
+        metrics = train_result.metrics
+        metrics["train_samples"] = len(train_dataset)
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
 
+    # 11. Evaluation
+    if training_args.do_eval:
+        logger.info("\n*** Evaluate ***\n")
+        metrics = trainer.evaluate()
+        metrics["eval_samples"] = len(eval_dataset)
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
+
+    # 12. Prediction
+    if training_args.do_predict:
+        logger.info("\n*** Predict ***\n")
+        predict_results = trainer.predict(predict_dataset)
+        
+        # Get logits with shape [num_samples, max_seq_len, 1]
+        predictions = predict_results.predictions[0]
+        # Remove last dimension to get shape [num_samples, max_seq_len]
+        predictions = predictions.squeeze(-1)
+        # Apply sigmoid to get probabilities
+        predictions_sigmoid = 1 / (1 + np.exp(-predictions))
+        # Convert to binary predictions
+        binary_predictions = (predictions_sigmoid > 0.5).astype(np.int64)
+        
+        # Save predictions
+        output_predict_file = os.path.join(training_args.output_dir, "predictions.npz")
+        np.savez(
+            output_predict_file,
+            logits=predictions,
+            probabilities=predictions_sigmoid,
+            predictions=binary_predictions,
+            labels=predict_results.label_ids if predict_results.label_ids is not None else None,
+            metrics=predict_results.metrics if predict_results.metrics is not None else None
+        )
+        logger.info(f"Saved predictions to {output_predict_file}")
 
 if __name__ == "__main__":
     main()
