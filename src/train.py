@@ -34,6 +34,14 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
+    input_features_column_name: Optional[str] = field(
+        default="flux_norm",
+        metadata={"help": "The name of the column containing the input features."}
+    )
+    labels_column_name: Optional[str] = field(
+        default="label",
+        metadata={"help": "The name of the column containing the labels."}
+    )
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
@@ -196,10 +204,10 @@ def main():
 
     # Rename column names to standardized names (only "input_features" and "labels" need to be present)
     for split in dataset.keys():
-        if "flux_norm" in dataset[split].column_names:
-            dataset[split] = dataset[split].rename_column("flux_norm", "input_features")
-        if "label" in dataset[split].column_names:
-            dataset[split] = dataset[split].rename_column("label", "labels")
+        if data_args.input_features_column_name in dataset[split].column_names:
+            dataset[split] = dataset[split].rename_column(data_args.input_features_column_name, "input_features")
+        if data_args.labels_column_name in dataset[split].column_names:
+            dataset[split] = dataset[split].rename_column(data_args.labels_column_name, "labels")
 
     # If we don't have a validation split, split off a percentage of train as validation.
     data_args.train_val_split = None if "validation" in dataset.keys() else data_args.train_val_split
