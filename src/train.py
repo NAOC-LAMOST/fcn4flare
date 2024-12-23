@@ -202,6 +202,13 @@ def main():
     # TODO support datasets from local folders
     dataset = load_dataset(data_args.dataset_name, trust_remote_code=True)
 
+    # Check if required columns are present
+    required_columns = [data_args.input_features_column_name, data_args.labels_column_name]
+    for split in dataset.keys():
+        for col in required_columns:
+            if col not in dataset[split].column_names:
+                raise ValueError(f"Column '{col}' not found in {split} dataset.")
+
     # Rename column names to standardized names (only "input_features" and "labels" need to be present)
     for split in dataset.keys():
         if data_args.input_features_column_name in dataset[split].column_names:
