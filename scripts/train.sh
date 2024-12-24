@@ -21,9 +21,9 @@ python src/train.py \
     --do_eval \
     --do_predict \
     --eval_strategy "epoch" \
-    --per_device_train_batch_size 128 \
-    --per_device_eval_batch_size 128 \
-    --learning_rate 2e-5 \
+    --per_device_train_batch_size 192 \
+    --per_device_eval_batch_size 192 \
+    --learning_rate 3e-5 \
     --num_train_epochs 50 \
     --log_level "info" \
     --logging_strategy "steps" \
@@ -31,9 +31,10 @@ python src/train.py \
     --save_strategy "epoch" \
     --save_total_limit 5 \
     --seed $SEED \
+    --dataloader_num_workers 8 \
     --run_name $RUN_NAME \
     --load_best_model_at_end true \
     --metric_for_best_model "dice" \
     --greater_is_better true \
     --early_stopping_patience 5 \
-    --early_stopping_threshold 0.01 \
+    --early_stopping_threshold 0.005 \
