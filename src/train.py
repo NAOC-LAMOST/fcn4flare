@@ -24,6 +24,7 @@ from transformers import (
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint
+from transformers.trainer_callback import EarlyStoppingCallback
 
 from data.data_collator import DataCollatorForFlareDetection
 from models import FCN4FlareModel, FCN4FlareConfig
@@ -131,6 +132,17 @@ class ModelArguments:
     trust_remote_code: bool = field(
         default=True,
         metadata={"help": "Whether to trust remote code"},
+    )
+
+@dataclass
+class TrainingArguments(transformers.TrainingArguments):
+    early_stopping_patience: int = field(
+        default=5,
+        metadata={"help": "Stop training when the metric worsens for N epochs."}
+    )
+    early_stopping_threshold: float = field(
+        default=0.0001,
+        metadata={"help": "Denotes how much the specified metric must improve to satisfy early stopping conditions."}
     )
 
 
@@ -383,6 +395,8 @@ def main():
             max_length=data_args.max_seq_length,
             pad_to_multiple_of=8 if training_args.fp16 else None
         ),
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=training_args.early_stopping_patience,
+                                       early_stopping_threshold=training_args.early_stopping_threshold)]
     )
 
     # 10. Training
