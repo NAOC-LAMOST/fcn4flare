@@ -1,5 +1,7 @@
 lightning_version/
 results/
+cache/
+wandb/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

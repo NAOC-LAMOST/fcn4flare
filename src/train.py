@@ -213,12 +213,14 @@ def main():
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     # 2. Setup logging
+    os.makedirs(training_args.output_dir, exist_ok=True)
+
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler(os.path.join(training_args.output_dir, "train.log"))
+            logging.FileHandler("./train.log")
         ],
     )
     
