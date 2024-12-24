@@ -193,16 +193,18 @@ class FlareDetectionPipeline(Pipeline):
                     continue
                 
                 # Valid flare event found
+                start_time = float(self.time_series[i][start_idx])
+                end_time = float(self.time_series[i][end_idx])
+                duration = end_time - start_time
                 event = {
                     "start_idx": int(start_idx),
-                    "end_idx": int(end_idx),
                     "peak_idx": int(peak_idx),
-                    "start_time": float(self.time_series[i][start_idx]),
-                    "end_time": float(self.time_series[i][end_idx]),
+                    "end_idx": int(end_idx),
+                    "start_time": start_time,
                     "peak_time": float(self.time_series[i][peak_idx]),
-                    "duration": len(segment),
+                    "end_time": end_time,
+                    "duration": duration,
                     "confidence": float(predictions[i, segment].mean()),
-                    "peak_flux": float(flux[peak_idx])
                 }
                 flare_events.append(event)
         

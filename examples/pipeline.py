@@ -1,22 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
-import pipelines.flare_detection.pipelines as pipelines
-from transformers import AutoModel
-from transformers.pipelines import SUPPORTED_TASKS
-from src.models import FCN4FlareModel
 from datasets import load_dataset
-import numpy as np
+from transformers import pipeline
 
-# Register the pipeline
-SUPPORTED_TASKS["flare-detection"] = {
-    "impl": pipelines.FlareDetectionPipeline,
-    "tf": (),
-    "pt": (FCN4FlareModel,),  # PyTorch model
-    "default": {
-        "model": "Maxwell-Jia/fcn4flare",
-    },
-}
 
 def plot_flare_events(time, flux, flare_events, window_width=20, figsize=(8, 6), save_path=None):
     """Plot each flare event in a separate subplot.
@@ -29,7 +16,6 @@ def plot_flare_events(time, flux, flare_events, window_width=20, figsize=(8, 6),
         figsize (tuple): Size of each subplot (width, height)
         save_path (str, optional): Path to save the figure. If None, display the plot
     """
-    import matplotlib.pyplot as plt
     
     n_events = len(flare_events)
     if n_events == 0:
@@ -109,13 +95,11 @@ print(np.where(dataset["train"][0]["label"])[0])
 file = "/mnt/lamostgpu/data/Yang_lightcurves/0053/005357275/kplr005357275-2011177032512_llc.fits"
 time, flux = load_lightcurve(file)
 
-model = AutoModel.from_pretrained("Maxwell-Jia/fcn4flare", trust_remote_code=True)
+flare_detection_pipeline = pipeline(model="Maxwell-Jia/fcn4flare", trust_remote_code=True)
 
-flare_detection_pipeline = pipelines.FlareDetectionPipeline(model=model)
-
-result = flare_detection_pipeline.predict([[
+result = flare_detection_pipeline([
     "/mnt/lamostgpu/data/Yang_lightcurves/0053/005357275/kplr005357275-2011177032512_llc.fits"
-]])
+])
 print(result)
 
 plot_flare_events(time, flux, result[0])
