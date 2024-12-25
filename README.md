@@ -161,7 +161,7 @@ This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE
 We feel compelled to share our frustrating experience with the initial publication process of this work:
 
 This paper was first submitted to ApJ over a year ago, where we encountered an extremely disappointing review process:
-- First review dragged on for nearly 6 months
+- First review dragged on for nearly half a year
 - After our revision, the reviewer suddenly became "unavailable"
 - Finding a new reviewer caused further unnecessary delays
 - Almost a year was wasted before the final rejection
