@@ -1,0 +1,60 @@
+seed_everything: 2023
+
+trainer:
+  # fast_dev_run: true
+  accelerator: 'gpu'
+  devices: [0]
+  # strategy: 'ddp'
+  max_epochs: 50
+  val_check_interval: 1.0
+  log_every_n_steps: 20
+  logger: true
+
+  callbacks: 
+  - class_path: pytorch_lightning.callbacks.EarlyStopping
+    init_args:
+      monitor: 'val_loss'
+      mode: 'min'
+      min_delta: 0.001
+      patience: 10
+
+  - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+    init_args:
+      monitor: 'val_dice'
+      mode: 'max'
+      filename: 'best-{epoch:02d}-{step:03d}-{val_dice:.3f}'
+      save_top_k: 5
+      save_last: true
+
+  - class_path: pytorch_lightning.callbacks.LearningRateMonitor
+    init_args:
+      logging_interval: 'epoch'
+
+model:
+  input_dim: 2
+  hidden_dim: 128
+  output_dim: 1
+  depth: 10
+  dilation: [1, 1, 1, 2, 2, 4, 8, 16, 32, 64]
+  maskdice_threshold: 0.5
+
+data:
+  data_root: 'D:/kepler_lc/'
+  lightcurves: './dataset/kepler_lightcurves.txt'
+  events: './dataset/events.csv'
+  val_size: 0.2
+  batch_size: 128
+  num_workers: 8
+
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 0.00002
+
+lr_scheduler:
+  class_path: torch.optim.lr_scheduler.StepLR
+  init_args:
+    step_size: 20
+    gamma: 0.5
+
+ckpt_path: 'lightning_logs/version_524974/checkpoints/best-epoch=33-step=6052-val_dice=0.672.ckpt'

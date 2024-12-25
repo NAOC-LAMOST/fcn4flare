@@ -1,0 +1,22 @@
+batch_size: 150
+data_root: /dev/shm/Yang_lightcurves/
+depth: 10
+dilation:
+- 1
+- 1
+- 1
+- 2
+- 2
+- 4
+- 8
+- 16
+- 32
+- 64
+events: ./dataset/events.csv
+hidden_dim: 128
+input_dim: 2
+lightcurves: ./dataset/lightcurves.txt
+maskdice_threshold: 0.5
+num_workers: 32
+output_dim: 1
+val_size: 0.2

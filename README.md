@@ -15,6 +15,15 @@
 
 This repository contains the official implementation of the paper: [FCN4Flare: Fully Convolution Neural Networks for Flare Detection](https://arxiv.org/abs/2407.21240).
 
+> ⚠️ **Important Note:**
+> - The original implementation (used in the paper) was based on PyTorch Lightning with random dataset splits, and is now available in the `lightning_version` directory.
+> - We have recently restructured the project using the Hugging Face ecosystem to improve accessibility and reproducibility:
+>   - Code has been refactored using Hugging Face's frameworks
+>   - Dataset has been reorganized into an AI-Ready format
+>   - Pre-trained models are now available through Hugging Face Hub
+> - Due to these improvements, results using our pre-trained models might show slight variations from those reported in the paper, though the differences are not significant.
+
+
 ## **Overview**
 
 FCN4Flare is a fully convolutional neural network designed for precise point-to-point detection of stellar flares in photometric time-series data. Stellar flares provide valuable insights into stellar magnetic activity and space weather environments, but detecting these flares is challenging due to missing data, imbalanced classes, and diverse flare morphologies. FCN4Flare addresses these challenges with:
@@ -145,3 +154,18 @@ If you find this work useful, please cite our paper:
 
 ## **License**
 This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+
+
+## **Dissatisfaction**
+
+We feel compelled to share our frustrating experience with the initial publication process of this work:
+
+This paper was first submitted to ApJ over a year ago, where we encountered an extremely disappointing review process:
+- First review dragged on for nearly 6 months
+- After our revision, the reviewer suddenly became "unavailable"
+- Finding a new reviewer caused further unnecessary delays
+- Almost a year was wasted before the final rejection
+
+This experience highlights the significant challenges in the astronomical peer review system, particularly for interdisciplinary research combining astronomy with modern AI techniques. While the paper has now been accepted by MNRAS, such extensive delays in the review process can severely impede scientific progress, especially in rapidly evolving fields like AI.
+
+We strongly advocate for more open-source practices in astronomical research. By making our entire project (code, data, models and even traing logs) publicly available, we hope to encourage more transparent and efficient knowledge sharing within the astronomy community. We believe this is crucial for advancing our field and fostering better collaboration between astronomy and modern AI research.
