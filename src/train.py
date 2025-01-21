@@ -156,7 +156,12 @@ def compute_metrics(eval_preds):
     
     # Remove last dimension to match labels shape
     predictions = predictions.squeeze(-1)  # Now shape is [num_samples, max_seq_len]
-    predictions_sigmoid = 1 / (1 + np.exp(-predictions))
+    # Numerically stable sigmoid computation
+    predictions_sigmoid = np.where(
+        predictions >= 0,
+        1 / (1 + np.exp(-predictions)),
+        np.exp(predictions) / (1 + np.exp(predictions))
+    )
     
     # Remove padded values (using -100 in labels to indicate padding)
     true_predictions = []
@@ -432,8 +437,12 @@ def main():
         predictions = predict_results.predictions[0]
         # Remove last dimension to get shape [num_samples, max_seq_len]
         predictions = predictions.squeeze(-1)
-        # Apply sigmoid to get probabilities
-        predictions_sigmoid = 1 / (1 + np.exp(-predictions))
+        # Numerically stable sigmoid computation
+        predictions_sigmoid = np.where(
+            predictions >= 0,
+            1 / (1 + np.exp(-predictions)),
+            np.exp(predictions) / (1 + np.exp(predictions))
+        )
         # Convert to binary predictions
         binary_predictions = (predictions_sigmoid > 0.5).astype(np.int64)
         
